@@ -7,8 +7,13 @@
         }
     ],
     "autoload": {
-        "psr-0": {
-            "Services": "./"
+        "psr-4": {
+            "Adrx\\MailmanService\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Adrx\\MailmanService\\Tests\\": "tests/"
         }
     },
     "description": "Allows the easy integration of Mailman into a dynamic website without using Python or requiring permission to Mailman binaries",
@@ -16,17 +21,16 @@
         "./"
     ],
     "license": "BSD License",
-    "name": "pear/services_mailman",
-    "support": {
-        "issues": "http://pear.php.net/bugs/search.php?cmd=display&package_name[]=Services_Mailman",
-        "source": "https://github.com/pear/Services_Mailman"
-    },
+    "name": "adrx/mailman_service",
     "type": "library",
     "require": {
+        "ext-libxml": "*",
+        "ext-dom": "*",
         "pear/pear_exception": "*",
-        "pear/http_request2": "*"
+        "pear/http_request2": "*",
+        "guzzlehttp/guzzle": "~6"
     },
     "require-dev": {
-        "phpunit/phpunit": "*"
+        "phpunit/phpunit": "^5"
     }
 }

@@ -1,9 +1,11 @@
 <?php
 
 /**
+ * derived from:
+ *
  * Services Mailman
  *
- * Exception handling
+ * MailmanServiceException handling
  *
  * PHP version 5
  *
@@ -50,7 +52,12 @@
  * @version   Release: @package_version@
  * @link      http://php-mailman.sourceforge.net/
  */
-class Services_Mailman_Exception extends Exception
+
+ namespace Adrx\MailmanService;
+
+ use Exception;
+
+class MailmanServiceException extends Exception
 {
     const USER_INPUT = 1;
     const INVALID_URL = 2;
