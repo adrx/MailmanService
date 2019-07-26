@@ -1,11 +1,4 @@
 {
-    "authors": [
-        {
-            "email": "jpswade@php.net",
-            "name": "James Wade",
-            "role": "Lead"
-        }
-    ],
     "autoload": {
         "psr-4": {
             "Adrx\\MailmanService\\": "src/"
@@ -26,8 +19,6 @@
     "require": {
         "ext-libxml": "*",
         "ext-dom": "*",
-        "pear/pear_exception": "*",
-        "pear/http_request2": "*",
         "guzzlehttp/guzzle": "~6"
     },
     "require-dev": {
