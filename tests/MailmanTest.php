@@ -42,7 +42,7 @@ class MailmanTest extends TestCase
         try {
             $mailman->subscribe('test_example.co.uk', 'a@example.net');
         } catch (MailmanServiceException $e) {
-            $this->assertEquals('Error subscribing', $e->getMessage());
+            $this->assertEquals('Error subscribing: a@example.net -- Already a member', $e->getMessage());
         }
     }
 
@@ -108,7 +108,7 @@ class MailmanTest extends TestCase
 
         // fail
         try {
-            var_dump($mailman->member('test_example.co.uk','fail'));
+            $mailman->member('test_example.co.uk','fail');
         } catch (MailmanServiceException $e) {
             $this->assertEquals('No match',  $e->getMessage());
         }
@@ -183,7 +183,6 @@ class MailmanTest extends TestCase
      */
     public function testIsSubscribed($email, $expected)
     {
-        echo $email;
         $html = file_get_contents(dirname(__FILE__).'/html/findmember-james.html');
         $responses[] = new MockResponse($html);
         $mailman = $this->getMockMailman($responses);
@@ -209,7 +208,6 @@ class MailmanTest extends TestCase
         $responses = [new MockResponse($html)];
         $mailman = $this->getMockMailman($responses);
         $lists = $mailman->lists();
-//        var_dump($lists);
         $expected = [
             0 => [
                 0 => "edge-users_cpanel.net",
@@ -265,12 +263,14 @@ class MailmanTest extends TestCase
         $html = file_get_contents(dirname(__FILE__).'/html/members-big.html');
         $responses = [new MockResponse($html)];
         foreach (range('a', 'z') as $letter) {
+            if ('q' == $letter) {
+                continue;
+            }
             $body[$letter] = str_replace('a2000', $letter.'2000', $html);
             $responses[] = new MockResponse($body[$letter]);
         }
         $mailman = $this->getMockMailman($responses);
         $members = $mailman->members('test_example.co.uk');
-//        var_dump($members);
         $expected = [
             [
                 "a2000@example.com",
@@ -289,7 +289,6 @@ class MailmanTest extends TestCase
                 "n2000@example.com",
                 "o2000@example.com",
                 "p2000@example.com",
-                "q2000@example.com",
                 "r2000@example.com",
                 "s2000@example.com",
                 "t2000@example.com",
@@ -326,7 +325,6 @@ class MailmanTest extends TestCase
                 "",
                 "",
                 "",
-                "",
             ]
         ];
         $this->assertEquals($expected, $members);
@@ -334,18 +332,18 @@ class MailmanTest extends TestCase
     public function testMembersEmpty()
     {
         $html=file_get_contents(dirname(__FILE__).'/html/members-empty.html');
-        $mailman = $this->getMockMailman([new MockResponse($html)]);
+        $responses = [new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
         $members=$mailman->members('test_example.co.uk');
-//        var_dump($members);
         $expected = [[], []];
         $this->assertEquals($expected, $members);
     }
     public function testMembersShort()
     {
         $html=file_get_contents(dirname(__FILE__).'/html/members-short.html');
-        $mailman = $this->getMockMailman([new MockResponse($html)]);
+        $responses = [new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
         $members=$mailman->members('test_example.co.uk');
-//        var_dump($members);
         $expected = [['test@example.com'], ['']];
         $this->assertEquals($expected, $members);
     }
@@ -374,7 +372,6 @@ class MailmanTest extends TestCase
         $mailman = $this->getMockMailman($responses);
 
         $version = $mailman->version('test_example.co.uk');
-        echo $version;
         $this->assertEquals('2.1.20', $version);
     }
 }

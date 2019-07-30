@@ -9,7 +9,7 @@ As with the original package, this allows the integration of Mailman into a dyna
 
 To use this, your code will need to require vendor/autoload.php.
 
-dev version uses symfony/browser-kit and symfony/http-client, modifies and incorporates some methods from https://github.com/ghanover/mailman-sync
+master version uses symfony/browser-kit and symfony/http-client, modifies and incorporates some methods from https://github.com/ghanover/mailman-sync
 
 
 Credits

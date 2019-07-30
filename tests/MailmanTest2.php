@@ -60,6 +60,8 @@ class MailmanTest2 extends TestCase
 
     public function testRosterSuccess()
     {
+        $html = file_get_contents(dirname(__FILE__).'/html/admin-login.html');
+        $responses[] = new MockResponse($html);
         $cookie = (string) new Cookie('test+admin', '123456', null, null, 'example.com');
         $info['response_headers'] = ['Set-Cookie' => $cookie];
         $responses[] = new MockResponse('', $info);

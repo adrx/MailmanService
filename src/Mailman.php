@@ -46,6 +46,7 @@ declare(strict_types=1);
  */
 namespace Adrx\MailmanService;
 
+use Symfony\Component\BrowserKit\Cookie;
 use Symfony\Component\BrowserKit\HttpBrowser;
 use Symfony\Component\DomCrawler\Crawler;
 use Symfony\Component\DomCrawler\Field\ChoiceFormField;
@@ -184,7 +185,6 @@ class Mailman
 
         $value = $on ? '1' : '0';
         $form['allmodbit_val'] = $value;
-//        var_dump($form->getValues());
         $this->httpBrowser->submit($form);
     }
 
@@ -193,7 +193,6 @@ class Mailman
         $path  = '/' . $list . '/members';
         $crawler = $this->getCrawler($path, $list);
         $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
-//        var_dump(count($letters)); die();
         if (count($letters)) {
             $letter = $email[0];
             $path  = '/admin/' . $list . '/members?letter='.$letter;
@@ -211,7 +210,6 @@ class Mailman
         } else {
             $mod->untick();
         }
-//        var_dump($form->getValues());
         $this->httpBrowser->submit($form);
     }
 
@@ -227,22 +225,22 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function unsubscribe(string $list, string $email, bool $invite = false): ?Mailman
+    public function unsubscribe(string $list, string $email): ?Mailman
     {
-        $path = '/admin/' . $list . '/members/add';
+        $path = '/admin/' . $list . '/members/remove';
         $query = array(
-            'subscribe_or_invite' => (int)$invite,
-            'send_welcome_msg_to_this_batch' => 0,
-            'send_notifications_to_list_owner' => 0,
-            'subscribees' => $email,
-            'adminpw' => $this->lists[$list]);
+            'send_unsub_ack_to_this_batch' => 0,
+            'send_unsub_notifications_to_list_owner' => 0,
+            'unsubscribees' => $email,
+            'adminpw' => $this->lists[$list],
+        );
         $crawler = $this->getCrawler($path, $list, $query);
         $h5 = $crawler->filterXPath('//body/h5');
         $h3 = $crawler->filterXPath('//body/h3');
         if ($h5->getNode(0) && $h5->getNode(0)->nodeValue == 'Successfully Unsubscribed:') {
             return $this;
         }
-        if ($h3) {
+        if ($h3->getNode(0)) {
             throw new MailmanServiceException(
                 trim($h3->getNode(0)->nodeValue, ':'),
                 MailmanServiceException::HTML_PARSE
@@ -273,7 +271,7 @@ class Mailman
     {
         $path = '/admin/' . $list . '/members/add';
         $query = array(
-            'subscribe_or_invite' => (int)$invite,
+            'subscribe_or_invite' => (int) $invite,
             'send_welcome_msg_to_this_batch' => 0,
             'send_notifications_to_list_owner' => 0,
             'subscribees' => $email,
@@ -287,9 +285,10 @@ class Mailman
             if ($value == 'Successfully subscribed:' || $value == 'Successfully invited:') {
                 return $this;
             } else {
+                $errorMsg = $crawler->filterXPath('//body/ul/li')->text();
                 throw new MailmanServiceException(
-                    trim($value, ':'),
-                    MailmanServiceException::HTML_PARSE
+                    trim($value).' '.trim($errorMsg),
+                    MailmanServiceException::USER_INPUT
                 );
             }
         }
@@ -430,14 +429,16 @@ class Mailman
      */
     public function members(string $list): array
     {
-        $path  = '/' . $list . '/members';
+        $path  = '/admin/' . $list . '/members';
         $crawler = $this->getCrawler($path, $list);
         $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
 
         if (count($letters)) {
-            $letters = range('a', 'z');
+            $letters = $letters->each(function (Crawler $node) {
+                return strtolower(trim($node->text(), '[]')) ;
+            });
         } else {
-            $letters = array(null);
+            $letters = [null];
         }
         $members = array(array(), array());
         foreach ($letters as $letter) {
@@ -551,15 +552,29 @@ class Mailman
      */
     public function roster($list)
     {
-        $path = '/roster/'.$list;
-        $query = ['adminpw' => $this->lists[$list], 'admlogin' => 'Let me in...'];
-        $this->httpBrowser->request('POST', $this->baseUri.'/admin/'.$list, ['body' => $query]);
-        $crawler = $this->getCrawler($path, $list);
-        $html = $crawler->html();
-        $members = [];
-        if (preg_match_all('~<a href="(?:[^"]*)/options/'.$list.'/([^"]+)">([^<]+)</a>~', $html, $m)) {
-            $members = str_replace(' at ', '@', $m[2]);
+        $hasAdminCookie = false;
+        /** @var Cookie $cookie */
+        foreach( $this->httpBrowser->getCookieJar()->all() as $cookie) {
+            if ($list.'+admin' == $cookie->getName()) {
+                $hasAdminCookie = true;
+            }
+        };
+        if (!$hasAdminCookie) { // set admin cookie
+            $crawler = $this->httpBrowser->request(
+                'GET',
+                $this->baseUri.'/admin/'.$list
+            );
+            $form = $crawler->selectButton("admlogin")->form();
+            $form['adminpw'] = 'swanee03';
+            $this->httpBrowser->submit($form);
         }
+
+        // now get and process the page
+        $path = '/roster/'.$list;
+        $crawler = $this->getCrawler($path, $list);
+        $members = $crawler->filterXPath('//li/a')->each(function (Crawler $node) {
+            return str_replace(' at ', '@', $node->text());
+        });
 
         return $members;
     }
@@ -609,18 +624,17 @@ class Mailman
         if ($list) {
             $query['adminpw'] = $this->lists[$list];
         }
-//        var_dump($query);
+
         $uri = $this->baseUri.$path;
 
         $parameters = [];
         if ('GET' === $method) {
-            $parameters['query'] = $query;
+            $query = http_build_query($query, '', '&');
+            $uri .= '?'.$query;
         } else {
             $parameters['body'] = $query;
         }
-
         $crawler = $this->httpBrowser->request($method, $uri, $parameters);
-//        var_dump($uri);
 
         return $crawler;
     }
