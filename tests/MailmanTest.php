@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 
 namespace Adrx\MailmanService\Tests;
@@ -6,51 +7,40 @@ namespace Adrx\MailmanService\Tests;
 
 use Adrx\MailmanService\Mailman;
 use Adrx\MailmanService\MailmanServiceException;
-use GuzzleHttp\Client as GuzzleClient;
-use GuzzleHttp\Handler\MockHandler;
-use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\BrowserKit\History;
+use Symfony\Component\BrowserKit\HttpBrowser;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
 
 class MailmanTest extends TestCase
 {
-    /** @var Mailman */
-    protected $Mailman;
+    /** @var History */
+    private $history;
 
-    /**
-     * Prepares the environment before running a test.
-     */
-    protected function setUp()
+    protected function getMockMailman($responses, $baseUri = 'http://example.co.uk/mailman')
     {
-        parent::setUp();
-        $testURL = 'http://example.co.uk/mailman/admin';
-        $testList = 'test_example.co.uk';
-        $testPW = 'password';
-        $this->Mailman = new Mailman($testURL, $testList, $testPW);
+        $client = new MockHttpClient($responses, $baseUri);
+        $browser = new HttpBrowser($client);
+        $this->history = $browser->getHistory();
+        $lists = ['test_example.co.uk' => 'password'];
 
-    }
-    protected function getMockGuzzleClient($htmls = [])
-    {
-        $mock = new MockHandler();
-        foreach ($htmls as $html) {
-            $mock->append((new Response(200, [], $html)));
-        }
-
-        return new GuzzleClient(['handler' => $mock]);
+        return new Mailman($baseUri, $lists, $browser);
     }
 
     public function testSubscribe()
     {
-        $html_success = file_get_contents(dirname(__FILE__) . '/members-add-success.html');
-        $html_fail = file_get_contents(dirname(__FILE__) . '/members-add-fail.html');
-        $guzzleClient = $this->getMockGuzzleClient([$html_success, $html_fail]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
+        $html_success = file_get_contents(dirname(__FILE__).'/html/members-add-success.html');
+        $html_fail = file_get_contents(dirname(__FILE__).'/html/members-add-fail.html');
+        $responses = [new MockResponse($html_success), new MockResponse($html_fail)];
+        $mailman = $this->getMockMailman($responses);
         try {
-            $this->Mailman->subscribe('a@example.net');
+            $mailman->subscribe('test_example.co.uk', 'a@example.net');
         } catch (MailmanServiceException $e) {
             echo 'Caught exception: ',  $e->getMessage(), "\n";
         }
         try {
-            $this->Mailman->subscribe('a@example.net');
+            $mailman->subscribe('test_example.co.uk', 'a@example.net');
         } catch (MailmanServiceException $e) {
             $this->assertEquals('Error subscribing', $e->getMessage());
         }
@@ -58,19 +48,18 @@ class MailmanTest extends TestCase
 
     public function testUnsubscribe()
     {
-        $html_success = file_get_contents(dirname(__FILE__) . '/members-remove-success.html');
-        $html_fail = file_get_contents(dirname(__FILE__) . '/members-remove-fail.html');
-
-        $guzzleClient = $this->getMockGuzzleClient([$html_success, $html_fail]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
+        $html_success = file_get_contents(dirname(__FILE__).'/html/members-remove-success.html');
+        $html_fail = file_get_contents(dirname(__FILE__).'/html/members-remove-fail.html');
+        $responses = [new MockResponse($html_success), new MockResponse($html_fail)];
+        $mailman = $this->getMockMailman($responses);
         try {
-            $this->Mailman->unsubscribe('a@example.net');
+            $mailman->unsubscribe('test_example.co.uk','a@example.net');
         } catch (MailmanServiceException $e) {
             echo 'Caught exception: ',  $e->getMessage(), "\n";
         }
         // fail
         try {
-            $this->Mailman->unsubscribe('a@example.net');
+            $mailman->unsubscribe('test_example.co.uk','a@example.net');
         } catch (MailmanServiceException $e) {
             $this->assertEquals('Cannot unsubscribe non-members', $e->getMessage());
         }
@@ -78,11 +67,13 @@ class MailmanTest extends TestCase
 
     public function testMember()
     {
-        $html_success = file_get_contents(dirname(__FILE__) . '/findmember-james.html');
-        $html_fail = file_get_contents(dirname(__FILE__) . '/findmember-fail.html');
-        $guzzleClient = $this->getMockGuzzleClient([$html_success, $html_fail]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
-
+        $html_success = file_get_contents(dirname(__FILE__).'/html/findmember-james.html');
+        $html_fail = file_get_contents(dirname(__FILE__).'/html/findmember-fail.html');
+        $responses = [
+            new MockResponse($html_success),
+            new MockResponse($html_fail),
+        ];
+        $mailman = $this->getMockMailman($responses);
         // success
         $expected = [
             [
@@ -112,22 +103,112 @@ class MailmanTest extends TestCase
                 'language' => "en",
             ],
         ];
-        $member = $this->Mailman->member('james');
+        $member = $mailman->member('test_example.co.uk','james');
         $this->assertEquals($expected, $member);
+
         // fail
         try {
-            var_dump($this->Mailman->member('fail'));
+            var_dump($mailman->member('test_example.co.uk','fail'));
         } catch (MailmanServiceException $e) {
             $this->assertEquals('No match',  $e->getMessage());
         }
     }
 
+    public function testModAll()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-big.html');
+        // test on
+        $responses = [new MockResponse($html), new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
+        $mailman->modAll('test_example.co.uk', true);
+        $lastRequest = $this->history->current();
+        $this->assertEquals('POST', $lastRequest->getMethod());
+        $parameters = $this->history->current()->getParameters();
+        $this->assertTrue(isset($parameters['allmodbit_btn']));
+        $this->assertTrue(isset($parameters['allmodbit_val']));
+        $this->assertEquals(1, $parameters['allmodbit_val']);
+        // test off
+        $responses = [new MockResponse($html), new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
+        $mailman->modAll('test_example.co.uk', false);
+        $lastRequest = $this->history->current();
+        $this->assertEquals('POST', $lastRequest->getMethod());
+        $parameters = $this->history->current()->getParameters();
+        $this->assertTrue(isset($parameters['allmodbit_btn']));
+        $this->assertTrue(isset($parameters['allmodbit_val']));
+        $this->assertEquals(0, $parameters['allmodbit_val']);
+    }
+
+    public function testModSubscriberBig()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-big.html');
+        // test on
+        $responses = [new MockResponse($html), new MockResponse($html), new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
+        $mailman->modSubscriber('test_example.co.uk','a2000@example.com', true);
+        $lastRequest = $this->history->current();
+        $this->assertEquals('POST', $lastRequest->getMethod());
+        $parameters = $this->history->current()->getParameters();
+        $parameter = urlencode('a2000@example.com').'_mod';
+        $this->assertTrue(isset($parameters[$parameter]));
+
+    }
+
+    public function testModSubscriberShort()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-short.html');
+        // test on
+        $responses = [new MockResponse($html), new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
+        $mailman->modSubscriber('test_example.co.uk', 'test@example.com', true);
+        $lastRequest = $this->history->current();
+        $this->assertEquals('POST', $lastRequest->getMethod());
+        $parameters = $this->history->current()->getParameters();
+        $parameter = urlencode('test@example.com').'_mod';
+        $this->assertTrue(isset($parameters[$parameter]));
+        // test off
+        $responses = [new MockResponse($html), new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
+        $mailman->modSubscriber('test_example.co.uk', 'test@example.com', false);
+        $lastRequest = $this->history->current();
+        $this->assertEquals('POST', $lastRequest->getMethod());
+        $parameters = $this->history->current()->getParameters();
+        $parameter = urlencode('test@example.com').'_mod';
+        $this->assertFalse(isset($parameters[$parameter]));
+    }
+
+
+    /**
+     * @dataProvider subscriberDataProvider
+     */
+    public function testIsSubscribed($email, $expected)
+    {
+        echo $email;
+        $html = file_get_contents(dirname(__FILE__).'/html/findmember-james.html');
+        $responses[] = new MockResponse($html);
+        $mailman = $this->getMockMailman($responses);
+
+        $this->assertSame($expected, $mailman->isSubscribed('test_example.co.uk', $email));
+    }
+
+    public function subscriberDataProvider()
+    {
+        return [
+            ['james.smith@example.co.uk', true],
+            ['james.jones@example.co.uk', true],
+            ['James.Smith@example.co.uk', true],
+            ['James.Jones@example.co.uk', true],
+            ['flange@example.co.uk', false],
+            ['flange', false],
+        ];
+    }
+
     public function testLists()
     {
-        $html = file_get_contents(dirname(__FILE__).'/mail.cpanel.net.html');
-        $guzzleClient = $this->getMockGuzzleClient([$html]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
-        $lists = $this->Mailman->lists();
+        $html = file_get_contents(dirname(__FILE__).'/html/mail.cpanel.net.html');
+        $responses = [new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
+        $lists = $mailman->lists();
 //        var_dump($lists);
         $expected = [
             0 => [
@@ -181,14 +262,14 @@ class MailmanTest extends TestCase
 //
     public function testMembersBig()
     {
-        $html = file_get_contents(dirname(__FILE__).'/members-big.html');
-        $htmls[] = $html;
+        $html = file_get_contents(dirname(__FILE__).'/html/members-big.html');
+        $responses = [new MockResponse($html)];
         foreach (range('a', 'z') as $letter) {
-            $htmls[] = str_replace('a2000', $letter.'2000', $html);
+            $body[$letter] = str_replace('a2000', $letter.'2000', $html);
+            $responses[] = new MockResponse($body[$letter]);
         }
-        $guzzleClient = $this->getMockGuzzleClient($htmls);
-        $this->Mailman->setGuzzleClient($guzzleClient);
-        $members = $this->Mailman->members();
+        $mailman = $this->getMockMailman($responses);
+        $members = $mailman->members('test_example.co.uk');
 //        var_dump($members);
         $expected = [
             [
@@ -252,20 +333,18 @@ class MailmanTest extends TestCase
     }
     public function testMembersEmpty()
     {
-        $html=file_get_contents(dirname(__FILE__) . '/members-empty.html');
-        $guzzleClient = $this->getMockGuzzleClient([$html]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
-        $members=$this->Mailman->members();
+        $html=file_get_contents(dirname(__FILE__).'/html/members-empty.html');
+        $mailman = $this->getMockMailman([new MockResponse($html)]);
+        $members=$mailman->members('test_example.co.uk');
 //        var_dump($members);
         $expected = [[], []];
         $this->assertEquals($expected, $members);
     }
     public function testMembersShort()
     {
-        $html=file_get_contents(dirname(__FILE__) . '/members-short.html');
-        $guzzleClient = $this->getMockGuzzleClient([$html]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
-        $members=$this->Mailman->members();
+        $html=file_get_contents(dirname(__FILE__).'/html/members-short.html');
+        $mailman = $this->getMockMailman([new MockResponse($html)]);
+        $members=$mailman->members('test_example.co.uk');
 //        var_dump($members);
         $expected = [['test@example.com'], ['']];
         $this->assertEquals($expected, $members);
@@ -273,16 +352,16 @@ class MailmanTest extends TestCase
 //
     public function testSetDigest()
     {
-        $html_success = file_get_contents(dirname(__FILE__) . '/setdigest-success.html');
-        $html_fail = file_get_contents(dirname(__FILE__) . '/setdigest-fail.html');
-        $guzzleClient = $this->getMockGuzzleClient([$html_success, $html_fail]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
+        $html_success = file_get_contents(dirname(__FILE__).'/html/setdigest-success.html');
+        $html_fail = file_get_contents(dirname(__FILE__).'/html/setdigest-fail.html');
+        $responses = [new MockResponse($html_success), new MockResponse($html_fail)];
+        $mailman = $this->getMockMailman($responses);
 
         // success
-        $this->assertEquals('1', $this->Mailman->setDigest('john.smith@example.co.uk',1));
+        $this->assertEquals('1', $mailman->setDigest('test_example.co.uk', 'john.smith@example.co.uk','1'));
         // fail
         try {
-            $this->Mailman->setDigest('fail@example.co.uk',1);
+            $mailman->setDigest('test_example.co.uk', 'fail@example.co.uk','1');
         } catch (MailmanServiceException $e) {
             echo 'Caught exception: ',  $e->getMessage(), "\n";
         }
@@ -290,11 +369,11 @@ class MailmanTest extends TestCase
 
     public function testVersion()
     {
-        $html=file_get_contents(dirname(__FILE__) . '/mail.cpanel.net.html');
-        $guzzleClient = $this->getMockGuzzleClient([$html]);
-        $this->Mailman->setGuzzleClient($guzzleClient);
+        $html=file_get_contents(dirname(__FILE__).'/html/mail.cpanel.net.html');
+        $responses = [new MockResponse($html)];
+        $mailman = $this->getMockMailman($responses);
 
-        $version = $this->Mailman->version();
+        $version = $mailman->version('test_example.co.uk');
         echo $version;
         $this->assertEquals('2.1.20', $version);
     }

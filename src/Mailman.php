@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 /**
  * derived from:
@@ -40,16 +41,14 @@
  * @license   http://www.opensource.org/licenses/bsd-license.php The BSD License
  * @version   GIT: $Id:$
  * @link      http://php-mailman.sourceforge.net/
+ *
+ * PLUS some code ideas from https://github.com/ghanover/mailman-sync
  */
 namespace Adrx\MailmanService;
 
-use GuzzleHttp\Client as GuzzleClient;
-use GuzzleHttp\Exception\GuzzleException;
-
-use DOMDocument;
-use DOMElement;
-use DOMXPath;
-
+use Symfony\Component\BrowserKit\HttpBrowser;
+use Symfony\Component\DomCrawler\Crawler;
+use Symfony\Component\DomCrawler\Field\ChoiceFormField;
 
 /**
  * Mailman Class
@@ -57,172 +56,27 @@ use DOMXPath;
 class Mailman
 {
     /**
-     * Default URL to the Mailman "Admin Links" page (no trailing slash)
-     *  For example: 'http://www.example.co.uk/mailman/admin'
-     * @var string
+     * @var array
+     * associative array of $listname => $adminpw
      */
-    protected $adminUrl;
-    /**
-     * Default name of the list
-     *  For example: 'test_example.co.uk'
-     * @var string
-     */
-    protected $list;
-    /**
-     * Default admin password for the list
-     *  For example: 'my-example-password'
-     * @var string
-     */
-    protected $adminPw;
-//    /**
-//     * A HTTP request instance
-//     *
-//     * @var HTTP_Request2 $request
-//     */
-//    public $request = null;
+    private $lists;
 
-    protected $guzzleClient;
+    /** @var HttpBrowser */
+    private $httpBrowser;
+
+    /** @var string */
+    private $baseUri;
+
     /**
      * Constructor
-     *
-     * @param string        $adminUrl Set the URL to the Mailman "Admin Links" page
-     * @param string        $list     Set the name of the list
-     * @param string        $adminPw  Set admin password of the list
-     * @param GuzzleClient $guzzleClient
+     * @param string $baseUri
+     * @param array $lists associative array of $listname => $adminpw
      */
-    public function __construct($adminUrl, $list = '', $adminPw = '', GuzzleClient $guzzleClient = null)
+    public function __construct(string $baseUri, array $lists = [], ?HttpBrowser $httpBrowser = null)
     {
-        $this->setList($list);
-        $this->setAdminUrl($adminUrl);
-        $this->setAdminPw($adminPw);
-        $this->setGuzzleClient($guzzleClient);
-    }
-
-    /**
-     * Sets the list name
-     *
-     * @param string $string The name of the list
-     *
-     * @return Mailman
-     *
-     * @throws MailmanServiceException
-     */
-    public function setList($string)
-    {
-        if (!is_string($string)) {
-            throw new MailmanServiceException(
-                'setList() expects parameter 1 to be string, ' .
-                gettype($string) . ' given',
-                MailmanServiceException::USER_INPUT
-            );
-        }
-        $this->list = $string;
-        return $this;
-    }
-    /**
-     * Sets the URL to the Mailman "Admin Links" page
-     *
-     * @param string $string The URL to the Mailman "Admin Links" page (no trailing slash)
-     *
-     * @return Mailman
-     *
-     * @throws MailmanServiceException
-     */
-    public function setAdminUrl($string)
-    {
-        if (empty($string)) {
-            throw new MailmanServiceException(
-                'setAdminUrl() does not expect parameter 1 to be empty',
-                MailmanServiceException::USER_INPUT
-            );
-        }
-        if (!is_string($string)) {
-            throw new MailmanServiceException(
-                'setAdminUrl() expects parameter 1 to be string, ' .
-                gettype($string) . ' given',
-                MailmanServiceException::USER_INPUT
-            );
-        }
-        $string = filter_var($string, FILTER_VALIDATE_URL, FILTER_FLAG_PATH_REQUIRED);
-        if (!$string) {
-            throw new MailmanServiceException(
-                'Invalid URL',
-                MailmanServiceException::INVALID_URL
-            );
-        }
-        $this->adminUrl = trim($string, '/');
-        return $this;
-    }
-    /**
-     * Sets the admin password of the list
-     *
-     * @param string $string The password string
-     *
-     * @return Mailman
-     *
-     * @throws MailmanServiceException
-     */
-    public function setAdminPw($string)
-    {
-        if (!is_string($string)) {
-            throw new MailmanServiceException(
-                'setAdminPw() expects parameter 1 to be string, ' .
-                gettype($string) . ' given',
-                MailmanServiceException::USER_INPUT
-            );
-        }
-        $this->adminPw = $string;
-        return $this;
-    }
-//    /**
-//     * Sets the request object
-//     *
-//     * @param HTTP_Request2 $object A HTTP request instance (otherwise one will be created)
-//     *
-//     * @return Services_Mailman
-//     */
-//    public function setRequest(HTTP_Request2 $object = null)
-//    {
-//        $this->request = ($object instanceof HTTP_Request2) ? $object : new HTTP_Request2();
-//        return $this;
-//    }
-
-    /**
-     * Fetches the HTML to be parsed
-     *
-     * @param string $url A valid URL to fetch
-     *
-     * @return string Return contents from URL (usually HTML)
-     *
-     * @throws MailmanServiceException
-     */
-    protected function fetch($url)
-    {
-        $url = filter_var($url, FILTER_VALIDATE_URL, FILTER_FLAG_PATH_REQUIRED);
-        if (!$url) {
-            throw new MailmanServiceException(
-                'Invalid URL',
-                MailmanServiceException::INVALID_URL
-            );
-        }
-        try {
-            $response = $this->getGuzzleClient()->request('GET', $url, ['verify' => false]);
-//            $this->request->setMethod('GET');
-//            $html = $this->request->send()->getBody();
-            $html = (string) $response->getBody();
-        } catch (GuzzleException $e) {
-            throw new MailmanServiceException(
-                $e,
-                MailmanServiceException::HTML_FETCH
-            );
-        }
-        if (strlen($html)>5) {
-            return $html;
-        }
-        throw new MailmanServiceException(
-            'Could not fetch HTML',
-            MailmanServiceException::HTML_FETCH
-        );
+        $this->baseUri = $baseUri;
+        $this->lists = $lists;
+        $this->httpBrowser = $httpBrowser ?: new HttpBrowser();
     }
 
     /**
@@ -236,30 +90,27 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function lists($assoc = true)
+    public function lists(bool $assoc = true): array
     {
-        $html = $this->fetch($this->adminUrl);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
-        $paths = $xpath->query('/html/body/table[1]/tr/td[1]/a/@href');
-        $names = $xpath->query('/html/body/table[1]/tr/td[1]/a/strong');
-        $descs = $xpath->query('/html/body/table[1]/tr/td[2]');
-        $count = $names->length;
+        $path = '/admin';
+        $crawler = $this->getCrawler($path);
+        $paths = $crawler->filterXPath('//body/table[1]/tr/td[1]/a/@href');
+        $names = $crawler->filterXPath('//body/table[1]/tr/td[1]/a/strong');
+        $descs = $crawler->filterXPath('//body/table[1]/tr/td[2]');
+        $count = count($names);
         if (!$count) {
             throw new MailmanServiceException(
                 'Failed to parse HTML',
                 MailmanServiceException::HTML_PARSE
             );
         }
+
         $a = array();
         for ($i=0;$i < $count;$i++) {
-            if ($paths->item($i)) {
-                $a[$i][0]=$paths->item($i)?basename($paths->item($i)->nodeValue):'';
-                $a[$i][1]=$names->item($i)?$names->item($i)->nodeValue:'';
-                $a[$i][2]=$descs->item($i)?$descs->item($i+2)->textContent:'';
+            if ($paths->eq($i)) {
+                $a[$i][0]= $paths->eq($i) ?basename($paths->getNode($i)->nodeValue):'';
+                $a[$i][1]= $names->eq($i)?$names->getNode($i)->nodeValue:'';
+                $a[$i][2]= $descs->eq($i)?$descs->getNode($i+2)->textContent:'';
                 if ($assoc) {
                     $a[$i]['path'] = $a[$i][0];
                     $a[$i]['name'] = $a[$i][1];
@@ -267,7 +118,7 @@ class Mailman
                 }
             }
         }
-        libxml_clear_errors();
+
         return $a;
     }
 
@@ -283,57 +134,85 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function member($string)
+    public function member(string $list, string $string): array
     {
-        if (!is_string($string)) {
-            throw new MailmanServiceException(
-                'member() expects parameter 1 to be string, ' .
-                gettype($string) . ' given',
-                MailmanServiceException::USER_INPUT
-            );
-        }
-        $path  = '/' . $this->list . '/members';
+        $path  = '/admin/' . $list . '/members';
         $query = array(
             'findmember'        => $string,
             'setmemberopts_btn' => null,
-            'adminpw'           => $this->adminPw
+            'adminpw'           => $this->lists[$list],
         );
 
-        $query = http_build_query($query, '', '&');
-        $url   = $this->adminUrl . $path . '?' . $query;
-        $html  = $this->fetch($url);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
+        $crawler = $this->getCrawler($path, $list, $query);
+
         $queries = array();
-        $queries['address'] = $xpath->query('/html/body/form/center/table/tr/td[2]/a');
-        $queries['realname'] = $xpath->query('/html/body/form/center/table/tr/td[2]/input[type=TEXT]/@value');
-        $queries['mod'] = $xpath->query('/html/body/form/center/table/tr/td[3]/center/input/@value');
-        $queries['hide'] = $xpath->query('/html/body/form/center/table/tr/td[4]/center/input/@value');
-        $queries['nomail'] = $xpath->query('/html/body/form/center/table/tr/td[5]/center/input/@value');
-        $queries['ack'] = $xpath->query('/html/body/form/center/table/tr/td[6]/center/input/@value');
-        $queries['notmetoo'] = $xpath->query('/html/body/form/center/table/tr/td[7]/center/input/@value');
-        $queries['nodupes'] = $xpath->query('/html/body/form/center/table/tr/td[8]/center/input/@value');
-        $queries['digest'] = $xpath->query('/html/body/form/center/table/tr/td[9]/center/input/@value');
-        $queries['plain'] = $xpath->query('/html/body/form/center/table/tr/td[10]/center/input/@value');
-        $queries['language'] = $xpath->query('/html/body/form/center/table/tr/td[11]/center/select/option[@selected]/@value');
-        libxml_clear_errors();
-        $count = $queries['address']->length;
+        $queries['address'] = $crawler->filterXPath('//body/form/center/table/tr/td[2]/a');
+        $queries['realname'] = $crawler->filterXPath('//body/form/center/table/tr/td[2]/input[type=TEXT]/@value');
+        $queries['mod'] = $crawler->filterXPath('//body/form/center/table/tr/td[3]/center/input/@value');
+        $queries['hide'] = $crawler->filterXPath('//body/form/center/table/tr/td[4]/center/input/@value');
+        $queries['nomail'] = $crawler->filterXPath('//body/form/center/table/tr/td[5]/center/input/@value');
+        $queries['ack'] = $crawler->filterXPath('//body/form/center/table/tr/td[6]/center/input/@value');
+        $queries['notmetoo'] = $crawler->filterXPath('//body/form/center/table/tr/td[7]/center/input/@value');
+        $queries['nodupes'] = $crawler->filterXPath('//body/form/center/table/tr/td[8]/center/input/@value');
+        $queries['digest'] = $crawler->filterXPath('//body/form/center/table/tr/td[9]/center/input/@value');
+        $queries['plain'] = $crawler->filterXPath('//body/form/center/table/tr/td[10]/center/input/@value');
+        $queries['language'] = $crawler->filterXPath('//body/form/center/table/tr/td[11]/center/select/option[@selected]/@value');
+        $count = count($queries['address']);
         if (!$count) {
             throw new MailmanServiceException(
                 'No match',
                 MailmanServiceException::NO_MATCH
             );
         }
+
         $a = array();
         for ($i=0;$i < $count;$i++) {
+            /** @var Crawler $query */
             foreach ($queries as $key => $query) {
-                $a[$i][$key] = $query->item($i) ? $query->item($i)->nodeValue : '';
+                $a[$i][$key] = $query->getNode($i) ? $query->getNode($i)->nodeValue : '';
             }
         }
+
         return $a;
+    }
+
+    public function modAll( string $list, bool $on = true)
+    {
+        $path  = '/admin/' . $list . '/members';
+        $crawler = $this->getCrawler($path, $list);
+        $form = $crawler->selectButton('allmodbit_btn')->form();
+
+        $value = $on ? '1' : '0';
+        $form['allmodbit_val'] = $value;
+//        var_dump($form->getValues());
+        $this->httpBrowser->submit($form);
+    }
+
+    public function modSubscriber( string $list, string $email, bool $on = true)
+    {
+        $path  = '/' . $list . '/members';
+        $crawler = $this->getCrawler($path, $list);
+        $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
+//        var_dump(count($letters)); die();
+        if (count($letters)) {
+            $letter = $email[0];
+            $path  = '/admin/' . $list . '/members?letter='.$letter;
+            $crawler = $this->getCrawler($path, $list);
+        }
+        $emailEncoded = urlencode($email);
+        $form = $crawler->selectButton('setmemberopts_btn')->form();
+        if (!isset($form[$emailEncoded.'_realname'])) { // no row for this subscriber
+            throw new MailmanServiceException('No such subscriber', MailmanServiceException::NO_MATCH);
+        }
+        /** @var ChoiceFormField $mod */
+        $mod = $form[$emailEncoded.'_mod'];
+        if ($on) {
+            $mod->tick();
+        } else {
+            $mod->untick();
+        }
+//        var_dump($form->getValues());
+        $this->httpBrowser->submit($form);
     }
 
     /**
@@ -348,32 +227,24 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function unsubscribe($email)
+    public function unsubscribe(string $list, string $email, bool $invite = false): ?Mailman
     {
-        $path = '/' . $this->list . '/members/remove';
+        $path = '/admin/' . $list . '/members/add';
         $query = array(
-            'send_unsub_ack_to_this_batch' => 0,
-            'send_unsub_notifications_to_list_owner' => 0,
-            'unsubscribees' => $email,
-            'adminpw' => $this->adminPw
-        );
-        $query = http_build_query($query, '', '&');
-        $url = $this->adminUrl . $path . '?' . $query;
-        $html = $this->fetch($url);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
-        $h5 = $xpath->query('/html/body/h5');
-        $h3 = $xpath->query('/html/body/h3');
-        libxml_clear_errors();
-        if ($h5->item(0) && $h5->item(0)->nodeValue == 'Successfully Unsubscribed:') {
+            'subscribe_or_invite' => (int)$invite,
+            'send_welcome_msg_to_this_batch' => 0,
+            'send_notifications_to_list_owner' => 0,
+            'subscribees' => $email,
+            'adminpw' => $this->lists[$list]);
+        $crawler = $this->getCrawler($path, $list, $query);
+        $h5 = $crawler->filterXPath('//body/h5');
+        $h3 = $crawler->filterXPath('//body/h3');
+        if ($h5->getNode(0) && $h5->getNode(0)->nodeValue == 'Successfully Unsubscribed:') {
             return $this;
         }
         if ($h3) {
             throw new MailmanServiceException(
-                trim($h3->item(0)->nodeValue, ':'),
+                trim($h3->getNode(0)->nodeValue, ':'),
                 MailmanServiceException::HTML_PARSE
             );
         }
@@ -398,39 +269,55 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function subscribe($email, $invite = false)
+    public function subscribe(string $list, string $email, bool $invite = false): ?Mailman
     {
-        $path = '/' . $this->list . '/members/add';
-        $query = array('subscribe_or_invite' => (int)$invite,
+        $path = '/admin/' . $list . '/members/add';
+        $query = array(
+            'subscribe_or_invite' => (int)$invite,
             'send_welcome_msg_to_this_batch' => 0,
             'send_notifications_to_list_owner' => 0,
             'subscribees' => $email,
-            'adminpw' => $this->adminPw);
-        $query = http_build_query($query, '', '&');
-        $url = $this->adminUrl . $path . '?' . $query;
-        $html = $this->fetch($url);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
-        $h5 = $xpath->query('/html/body/h5');
-        libxml_clear_errors();
-        if (!is_object($h5) || $h5->length == 0) {
+            'adminpw' => $this->lists[$list]);
+        $crawler = $this->getCrawler($path, $list, $query);
+        $h5 = $crawler->filterXPath('//body/h5');
+        if (!is_object($h5) || count($h5) == 0) {
             return false;
         }
-        if ($h5->item(0)->nodeValue) {
-            if ($h5->item(0)->nodeValue == 'Successfully subscribed:' || $h5->item(0)->nodeValue == 'Successfully invited:') {
+        if ($value = $h5->getNode(0)->nodeValue) {
+            if ($value == 'Successfully subscribed:' || $value == 'Successfully invited:') {
                 return $this;
             } else {
                 throw new MailmanServiceException(
-                    trim($h5->item(0)->nodeValue, ':'),
+                    trim($value, ':'),
                     MailmanServiceException::HTML_PARSE
                 );
             }
         }
+
         return false;
     }
+
+    public function isSubscribed(string $list, string $email): bool
+    {
+        try {
+            $searchResults = $this->member($list, $email);
+        }
+        catch(MailmanServiceException $e) {
+            if (6 == $e->getCode()) {
+                return false;
+            } else { // throw the exception again
+                throw new MailmanServiceException($e->getMessage(), $e->getCode());
+            }
+        }
+        foreach ($searchResults as $subscriber) {
+            if (!strcasecmp($email, $subscriber["address"])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 
     /**
      * Set digest. Note that the $email needs to be subsribed first
@@ -449,9 +336,9 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function setDigest($email, $digest = 1)
+    public function setDigest(string $list, string $email, string $digest = '1'): string
     {
-        return $this->setOption($email, 'digest', $digest ? 1 : 0);
+        return $this->setOption($list, $email, 'digest', $digest ? '1' :'0');
     }
 
     /**
@@ -467,17 +354,9 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function setOption($email, $option, $value)
+    public function setOption(string $list, string $email, string $option, string $value): string
     {
-        if (!is_string($email)) {
-            throw new MailmanServiceException(
-                'setOption() expects parameter 1 to be string, ' .
-                gettype($email) . ' given',
-                MailmanServiceException::USER_INPUT
-            );
-        }
-        $path = '/options/' . $this->list . '/' . str_replace('@', '--at--', $email);
-        $query = array('password' => $this->adminPw);
+        $path = '/options/' . $list . '/' . str_replace('@', '--at--', $email);
         if ($option == 'new-address') {
             $query['new-address'] = $value;
             $query['confirm-address'] = $value;
@@ -534,18 +413,9 @@ class Mailman
                 MailmanServiceException::INVALID_OPTION
             );
         }
-        $query = http_build_query($query, '', '&');
-        $url = dirname($this->adminUrl) . $path . '?' . $query;
-        $html = $this->fetch($url);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
-        $query = $xpath->query($xp);
-        libxml_clear_errors();
-        if ($query->item(0)) {
-            return $query->item(0)->nodeValue;
+        $crawler = $this->getCrawler($path, $list, $query)->filterXPath($xp);
+        if ($node = $crawler->getNode(0)) {
+            return $node->nodeValue;
         }
         throw new MailmanServiceException(
             'Failed to parse HTML',
@@ -558,52 +428,37 @@ class Mailman
      *
      * @return array  Returns two nested arrays, the first contains email addresses, the second contains names
      */
-    public function members()
+    public function members(string $list): array
     {
-        $path = '/' . $this->list . '/members';
-        $query = array('adminpw' => $this->adminPw);
-        $query = http_build_query($query, '', '&');
-        $url = $this->adminUrl . $path . '?' . $query;
-        $html = $this->fetch($url);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
-        $letters = $xpath->query('/html/body/form/center[1]/table/tr[2]/td/center/a');
-        libxml_clear_errors();
-        if ($letters->length>0) {
+        $path  = '/' . $list . '/members';
+        $crawler = $this->getCrawler($path, $list);
+        $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
+
+        if (count($letters)) {
             $letters = range('a', 'z');
         } else {
             $letters = array(null);
         }
         $members = array(array(), array());
         foreach ($letters as $letter) {
-            $query = array('adminpw' => $this->adminPw);
+            $query = array('adminpw' => $this->lists[$list]);
             if ($letter != null) {
                 $query['letter'] = $letter;
-                $query = http_build_query($query, '', '&');
-                $url = $this->adminUrl . $path . '?' . $query;
-                $html = $this->fetch($url);
+                $crawler = $this->getCrawler($path, $list, $query);
             }
-            libxml_use_internal_errors(true);
-            $doc = new DOMDocument();
-            $doc->preserveWhiteSpace = false;
-            $doc->loadHTML($html);
-            $xpath = new DOMXPath($doc);
-            $emails = $xpath->query('/html/body/form/center[1]/table/tr/td[2]/a');
-            $names = $xpath->query('/html/body/form/center[1]/table/tr/td[2]/input[1]/@value');
-            $count = $emails->length;
+            $emails = $crawler->filterXPath('//html/body/form/center[1]/table/tr/td[2]/a');
+            $names = $crawler->filterXPath('//body/form/center[1]/table/tr/td[2]/input[1]/@value');
+            $count = count($emails);
             for ($i=0;$i < $count;$i++) {
-                if ($emails->item($i)) {
-                    $members[0][]=$emails->item($i)->nodeValue;
+                if ($emails->eq($i)) {
+                    $members[0][]=$emails->getNode($i)->nodeValue;
                 }
-                if ($names->item($i)) {
-                    $members[1][]=$names->item($i)->nodeValue;
+                if ($names->eq($i)) {
+                    $members[1][]=$names->getNode($i)->nodeValue;
                 }
             }
-            libxml_clear_errors();
         }
+
         return $members;
     }
     /**
@@ -613,20 +468,11 @@ class Mailman
      *
      * @throws MailmanServiceException
      */
-    public function version()
+    public function version(string $list): string
     {
-        $path = '/' . $this->list . '/';
-        $query = array('adminpw' => $this->adminPw);
-        $query = http_build_query($query, '', '&');
-        $url = $this->adminUrl . $path . '?' . $query;
-        $html = $this->fetch($url);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
-        $content = $xpath->query('//table[last()]')->item(0)->textContent;
-        libxml_clear_errors();
+        $path = '/admin/' . $list . '/';
+        $crawler = $this->getCrawler($path, $list);
+        $content = $crawler->filterXPath('//table[last()]')->eq(0)->text();
         if (preg_match('#version ([\d-.]+)#is', $content, $m)) {
             return array_pop($m);
         }
@@ -635,99 +481,147 @@ class Mailman
             MailmanServiceException::HTML_PARSE
         );
     }
+//    /**
+//     * Parse and Return General List info
+//     *
+//     * (ie: <domain.com>/mailman/admin/<listname>)
+//     *
+//     * @param string $string list name
+//     *
+//     * @return array Return an array of list information
+//     *
+//     * @throws MailmanServiceException
+//     */
+//    public function listinfo(string $list): array
+//    {
+//        $path  = '/' . $list;
+//        $crawler = $this->getCrawler($path, $list);
+//        $a = array();
+//        $queries = array();
+//        $queries[] = $crawler->filterXPath("//input");
+//        $queries[] = $crawler->filterXPath("//textarea");
+//        $ignore_types = array(
+//            'submit',
+//            'hidden',
+//        );
+//        //get inputs
+//
+//        foreach ($queries as $query) {
+//            foreach ($query as $item) {
+//                /** @var DomElement $item */
+//                $type = strtolower($item->getAttribute('type'));
+//                $type = (empty($type)) ? 'textarea' : $type;
+//                if (in_array($type, $ignore_types)) {
+//                    continue; //ignore defined types
+//                }
+//
+//                $name = $item->getAttribute('name');
+//                $value = ($type === 'textarea') ? $item->nodeValue : $item->getAttribute('value');
+//                $checked = $item->getAttribute('checked');
+//
+//                //initialize checkbox array if it's not set
+//                if ($type === 'checkbox' && !isset($a[$name])) {
+//                    $a[$name] = array();
+//                }
+//
+//                //skip non checked values
+//                if ($type === 'radio' && $checked !== 'checked')  {
+//                    continue;
+//                }
+//                if ($type === 'checkbox' && $checked !== 'checked') {
+//                    continue;
+//                }
+//
+//                if ($type === 'checkbox') {
+//                    $a[$name][] = $value;
+//                } else {
+//                    $a[$name] = $value;
+//                }
+//            }
+//        }
+//        ksort($a);
+//
+//        return $a;
+//    }
+
     /**
-     * Parse and Return General List info
-     *
-     * (ie: <domain.com>/mailman/admin/<listname>)
-     *
-     * @param string $string list name
-     *
-     * @return array Return an array of list information
-     *
+     * from ghanover/mailman-sync
+     * @param $list
+     * @return array
+     */
+    public function roster($list)
+    {
+        $path = '/roster/'.$list;
+        $query = ['adminpw' => $this->lists[$list], 'admlogin' => 'Let me in...'];
+        $this->httpBrowser->request('POST', $this->baseUri.'/admin/'.$list, ['body' => $query]);
+        $crawler = $this->getCrawler($path, $list);
+        $html = $crawler->html();
+        $members = [];
+        if (preg_match_all('~<a href="(?:[^"]*)/options/'.$list.'/([^"]+)">([^<]+)</a>~', $html, $m)) {
+            $members = str_replace(' at ', '@', $m[2]);
+        }
+
+        return $members;
+    }
+
+
+
+    /**
+     * from ghanover/mailman-sync
+     * @param string $list
+     * @return bool
      * @throws MailmanServiceException
      */
-    public function listinfo($string)
+    public function change(string $list, string $emailFrom, string $emailTo): bool
     {
-        if (!is_string($string)) {
-            throw new MailmanServiceException(
-                'member() expects parameter 1 to be string, ' .
-                gettype($string) . ' given',
-                MailmanServiceException::USER_INPUT
-            );
+        $path = '/admin/' . $list . '/members/change';
+        $query = [
+            'change_from' => $emailFrom,
+            'change_to' => $emailTo,
+            'notice_old' => 0,
+            'notice_new' => 0,
+            'adminpw' => $this->lists[$list],
+        ];
+        $crawler = $this->getCrawler($path, $list, $query);
+        $html = $crawler->html();
+        if (strstr($html, 'is not a member')) {
+            throw new MailmanServiceException($emailTo.' is already a list member',
+                MailmanServiceException::USER_INPUT);
         }
-        $path  = '/' . $string;
-        $query = array(
-            'adminpw'=>$this->adminPw
-        );
-        $query = http_build_query($query, '', '&');
-        $url   = $this->adminUrl . $path . '?' . $query;
-        $html  = $this->fetch($url);
-        libxml_use_internal_errors(true);
-        $doc = new DOMDocument();
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($html);
-        $xpath = new DOMXPath($doc);
-        $a = array();
-        $queries = array();
-        $queries[] = $xpath->query("//input");
-        $queries[] = $xpath->query("//textarea");
-        $ignore_types = array(
-            'submit',
-            'hidden',
-        );
-        //get inputs
-
-        foreach ($queries as $query) {
-            foreach ($query as $item) {
-                /** @var DomElement $item */
-                $type = strtolower($item->getAttribute('type'));
-                $type = (empty($type)) ? 'textarea' : $type;
-                if (in_array($type, $ignore_types)) {
-                    continue; //ignore defined types
-                }
-
-                $name = $item->getAttribute('name');
-                $value = ($type === 'textarea') ? $item->nodeValue : $item->getAttribute('value');
-                $checked = $item->getAttribute('checked');
-
-                //initialize checkbox array if it's not set
-                if ($type === 'checkbox' && !isset($a[$name])) {
-                    $a[$name] = array();
-                }
-
-                //skip non checked values
-                if ($type === 'radio' && $checked !== 'checked')  {
-                    continue;
-                }
-                if ($type === 'checkbox' && $checked !== 'checked') {
-                    continue;
-                }
-
-                if ($type === 'checkbox') {
-                    $a[$name][] = $value;
-                } else {
-                    $a[$name] = $value;
-                }
-            }
+        if (strstr($html, 'is already a list member')) {
+            throw new MailmanServiceException($emailTo.' is already a list member',
+                MailmanServiceException::USER_INPUT);
         }
-        ksort($a);
-        return $a;
+
+        return true;
     }
 
     /**
-     * @return GuzzleClient|null
+     * @param string $path
+     * @param string $list
+     * @param array $query
+     * @param string $method
+     *
+     * @return Crawler
      */
-    public function getGuzzleClient()
+    private function getCrawler(string $path, string $list = '', array $query = [], string $method = 'GET'): Crawler
     {
-        return $this->guzzleClient;
-    }
+        if ($list) {
+            $query['adminpw'] = $this->lists[$list];
+        }
+//        var_dump($query);
+        $uri = $this->baseUri.$path;
 
-    /**
-     * @param GuzzleClient $guzzleClient
-     */
-    public function setGuzzleClient(GuzzleClient $guzzleClient = null)
-    {
-        $this->guzzleClient = $guzzleClient ? : new GuzzleClient();
+        $parameters = [];
+        if ('GET' === $method) {
+            $parameters['query'] = $query;
+        } else {
+            $parameters['body'] = $query;
+        }
+
+        $crawler = $this->httpBrowser->request($method, $uri, $parameters);
+//        var_dump($uri);
+
+        return $crawler;
     }
-} //end
-//eof
+}

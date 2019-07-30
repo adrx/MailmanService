@@ -3,8 +3,6 @@
     <testsuites>
         <testsuite name="My Test Suite">
             <directory>tests</directory>
-            <!-- (line below added) -->
-            <directory suffix=".phpt">tests</directory>
         </testsuite>
     </testsuites>
     <!-- ... -->
