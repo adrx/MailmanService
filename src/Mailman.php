@@ -190,7 +190,7 @@ class Mailman
 
     public function modSubscriber( string $list, string $email, bool $on = true)
     {
-        $path  = '/' . $list . '/members';
+        $path  = '/admin/' . $list . '/members';
         $crawler = $this->getCrawler($path, $list);
         $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
         if (count($letters)) {
@@ -198,6 +198,11 @@ class Mailman
             $path  = '/admin/' . $list . '/members?letter='.$letter;
             $crawler = $this->getCrawler($path, $list);
         }
+
+//        $crawler = $this->httpBrowser->submitForm('findmember_btn', [
+//            'findmember' => $email,
+//        ]);
+
         $emailEncoded = urlencode($email);
         $form = $crawler->selectButton('setmemberopts_btn')->form();
         if (!isset($form[$emailEncoded.'_realname'])) { // no row for this subscriber
@@ -210,6 +215,7 @@ class Mailman
         } else {
             $mod->untick();
         }
+        $form['user'] = $emailEncoded;
         $this->httpBrowser->submit($form);
     }
 
