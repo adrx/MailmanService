@@ -72,12 +72,102 @@ class Mailman
      * Constructor
      * @param string $baseUri
      * @param array $lists associative array of $listname => $adminpw
+     * @param HttpBrowser|null $httpBrowser
      */
     public function __construct(string $baseUri, array $lists = [], ?HttpBrowser $httpBrowser = null)
     {
         $this->baseUri = $baseUri;
         $this->lists = $lists;
         $this->httpBrowser = $httpBrowser ?: new HttpBrowser();
+    }
+
+    /**
+     * @param string $list
+     * @param array $emails
+     *
+     * @return array
+     * array['success'] comtains subscribees successfully subscribed
+     * array['Already a member'] comtains subscribees already subscribed
+     * array['Bad/Invalid email address'] comtains subscribee addresses that Mailman considers invalid
+     */
+    public function addMembers(string $list, array $emails): array
+    {
+        $path = '/admin/' . $list . '/members/add';
+        // this should set the {listname}-admin cookie
+        $query = array(
+            'setmemberopts_btn' => 1,
+            'adminpw' => $this->lists[$list],
+        );
+        $crawler = $this->getCrawler($path, $list, $query);
+        $form = $crawler->selectButton("setmemberopts_btn")->form();
+        $form["subscribe_or_invite"] = 0;
+        $form['send_notifications_to_list_owner'] = 0;
+        $form['send_welcome_msg_to_this_batch'] = 0;
+        unset($form["subscribees_upload"]);
+        $form["subscribees"] = implode("\n", $emails);
+        $crawler = $this->httpBrowser->submit($form);
+        $output = $crawler->filterXPath('//body/ul/li');
+        $array = [];
+        $output->each(function (Crawler $node) use (&$array) {
+            $tmp = explode(' -- ', $node->text());
+            if (isset($tmp[1])) {
+                if ('Already a member' === trim($tmp[1])) {
+                    $array['already_member'][] = trim($tmp[0]);
+                } else {
+                    $array['error'][trim($tmp[0])] = trim($tmp[1]);
+                }
+            } else {
+                $array['success'][] = trim($tmp[0]);
+            }
+        });
+
+        return $array;
+    }
+
+    /**
+     * from ghanover/mailman-sync
+     * @param string $list
+     * @param string $emailFrom
+     * @param string $emailTo
+     * @return bool
+     * @throws MailmanServiceException
+     */
+    public function change(string $list, string $emailFrom, string $emailTo): bool
+    {
+        $path = '/admin/' . $list . '/members/change';
+        $query = [
+            'change_from' => $emailFrom,
+            'change_to' => $emailTo,
+            'notice_old' => 0,
+            'notice_new' => 0,
+            'adminpw' => $this->lists[$list],
+        ];
+        $crawler = $this->getCrawler($path, $list, $query);
+        $html = $crawler->html();
+        if (strstr($html, 'is not a member')) {
+            throw new MailmanServiceException($emailTo.' is already a list member',
+                MailmanServiceException::USER_INPUT);
+        }
+        if (strstr($html, 'is already a list member')) {
+            throw new MailmanServiceException($emailTo.' is already a list member',
+                MailmanServiceException::USER_INPUT);
+        }
+
+        return true;
+    }
+
+    public function isSubscribed(string $list, string $email): bool
+    {
+        $crawler = $this->getMemberCrawler($list, $email);
+        $addresses = $crawler->filterXPath('//body/form/center/table/tr/td[2]/a');
+        $match = false;
+        foreach ($addresses as $address) {
+            if (!strcasecmp($email, $address->nodeValue)) {
+                $match = true;
+            }
+        };
+
+        return $match;
     }
 
     /**
@@ -129,6 +219,7 @@ class Mailman
      * (ie: <domain.com>/mailman/admin/<listname>/members?findmember=<email-address>
      *      &setmemberopts_btn&adminpw=<adminpassword>)
      *
+     * @param string $list
      * @param string $string A search string for member
      *
      * @return array Return an array of members (and their options) that match the string
@@ -177,6 +268,48 @@ class Mailman
         return $a;
     }
 
+    /**
+     * List members
+     *
+     * @param string $list
+     * @return array  Returns two nested arrays, the first contains email addresses, the second contains names
+     */
+    public function members(string $list): array
+    {
+        $path  = '/admin/' . $list . '/members';
+        $crawler = $this->getCrawler($path, $list);
+        $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
+
+        if (count($letters)) {
+            $letters = $letters->each(function (Crawler $node) {
+                return strtolower(trim($node->text(), '[]')) ;
+            });
+        } else {
+            $letters = [null];
+        }
+        $members = array(array(), array());
+        foreach ($letters as $letter) {
+            $query = array('adminpw' => $this->lists[$list]);
+            if ($letter != null) {
+                $query['letter'] = $letter;
+                $crawler = $this->getCrawler($path, $list, $query);
+            }
+            $emails = $crawler->filterXPath('//html/body/form/center[1]/table/tr/td[2]/a');
+            $names = $crawler->filterXPath('//body/form/center[1]/table/tr/td[2]/input[1]/@value');
+            $count = count($emails);
+            for ($i=0;$i < $count;$i++) {
+                if ($emails->eq($i)) {
+                    $members[0][]=$emails->getNode($i)->nodeValue;
+                }
+                if ($names->eq($i)) {
+                    $members[1][]=$names->getNode($i)->nodeValue;
+                }
+            }
+        }
+
+        return $members;
+    }
+
     public function modAll( string $list, bool $on = true)
     {
         $path  = '/admin/' . $list . '/members';
@@ -190,139 +323,114 @@ class Mailman
 
     public function modSubscriber( string $list, string $email, bool $on = true)
     {
-        $path  = '/admin/' . $list . '/members';
-        $crawler = $this->getCrawler($path, $list);
-        $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
-        if (count($letters)) {
-            $letter = $email[0];
-            $path  = '/admin/' . $list . '/members?letter='.$letter;
-            $crawler = $this->getCrawler($path, $list);
+        $crawler = $this->getMemberCrawler($list, $email);
+        // test whether subscribed
+        $addresses = $crawler->filterXPath('//body/form/center/table/tr/td[2]/a');
+        $match = false;
+        foreach ($addresses as $address) {
+            if (!strcasecmp($email, $address->nodeValue)) {
+                $match = true;
+            }
+        };
+        if (!$match) {
+            throw new MailmanServiceException(
+                $email.'is not subscribed to '.$list,
+                MailmanServiceException::NO_MATCH
+            );
+
         }
-
-//        $crawler = $this->httpBrowser->submitForm('findmember_btn', [
-//            'findmember' => $email,
-//        ]);
-
-        $emailEncoded = urlencode($email);
+        // get options
         $form = $crawler->selectButton('setmemberopts_btn')->form();
-        if (!isset($form[$emailEncoded.'_realname'])) { // no row for this subscriber
-            throw new MailmanServiceException('No such subscriber', MailmanServiceException::NO_MATCH);
-        }
         /** @var ChoiceFormField $mod */
-        $mod = $form[$emailEncoded.'_mod'];
+        $mod = $form[urlencode($email).'_mod'];
         if ($on) {
             $mod->tick();
         } else {
             $mod->untick();
         }
-        $form['user'] = $emailEncoded;
         $this->httpBrowser->submit($form);
     }
 
-    /**
-     * Unsubscribe
-     *
-     * (ie: <domain.com>/mailman/admin/<listname>/members/remove?send_unsub_ack_to_this_batch=0
-     *      &send_unsub_notifications_to_list_owner=0&unsubscribees=<email-address>&adminpw=<adminpassword>)
-     *
-     * @param string $email Valid email address of a member to unsubscribe
-     *
-     * @return Mailman
-     *
-     * @throws MailmanServiceException
-     */
-    public function unsubscribe(string $list, string $email): ?Mailman
+    public function removeMembers(string $list, array $emails)
     {
         $path = '/admin/' . $list . '/members/remove';
+        // this should set the {listname}-admin cookie
         $query = array(
-            'send_unsub_ack_to_this_batch' => 0,
-            'send_unsub_notifications_to_list_owner' => 0,
-            'unsubscribees' => $email,
+            'setmemberopts_btn' => 1,
             'adminpw' => $this->lists[$list],
         );
         $crawler = $this->getCrawler($path, $list, $query);
-        $h5 = $crawler->filterXPath('//body/h5');
-        $h3 = $crawler->filterXPath('//body/h3');
-        if ($h5->getNode(0) && $h5->getNode(0)->nodeValue == 'Successfully Unsubscribed:') {
-            return $this;
+        $form = $crawler->selectButton("setmemberopts_btn")->form();
+        $form["send_unsub_ack_to_this_batch"] = 0;
+        $form["send_unsub_notifications_to_list_owner"] = 0;
+        $form["unsubscribees"] = implode("\n", $emails);
+        unset($form["unsubscribees_upload"]);
+        $crawler = $this->httpBrowser->submit($form);
+        $success = $crawler->filterXPath('//body/h5/following-sibling::ul[1]/li');
+        $array = [];
+        if (count($success)) {
+            $array['success'] = [];
+            $success->each(function (Crawler $node) use (&$array) {
+                $array['success'][] = trim($node->text());
+            });
         }
-        if ($h3->getNode(0)) {
-            throw new MailmanServiceException(
-                trim($h3->getNode(0)->nodeValue, ':'),
-                MailmanServiceException::HTML_PARSE
-            );
+        $failure = $crawler->filterXPath('//body/h3/following-sibling::ul[1]/li');
+        if (count($failure)) {
+            $array['failure'] = [];
+            $failure->each(function (Crawler $node) use (&$array) {
+                $array['failure'][] = trim($node->text());
+            });
         }
-        throw new MailmanServiceException(
-            'Failed to parse HTML',
-            MailmanServiceException::HTML_PARSE
-        );
+
+        return $array;
+        /*
+         * could test for this:
+         *     <BODY bgcolor="white"\n
+         *     dir="ltr">\n
+         * <h5>Successfully Unsubscribed:</h5>\n
+         * <ul>\n
+         * <li>al.berta@labourarbitrators.org\n
+         * </ul>\n
+         * <p><h3><strong><font color="#ff0000" size="+2">Cannot unsubscribe non-members:</font></strong></h3>\n
+         * <ul>\n
+         * <li>Anne.arbitrator@labourarbitrators.org\n
+         * </ul>\n
+         */
     }
 
     /**
-     * Subscribe
-     *
-     * (ie: http://example.co.uk/mailman/admin/test_example.co.uk/members/add
-     * ?subscribe_or_invite=0&send_welcome_msg_to_this_batch=1
-     * &send_notifications_to_list_owner=0&subscribees=test%40example.co.uk
-     * &invitation=&setmemberopts_btn=Submit+Your+Changes)
-     *
-     * @param string  $email  Valid email address to subscribe
-     * @param boolean $invite Send an invite or not (default)
-     *
-     * @return Mailman|bool
-     *
-     * @throws MailmanServiceException
+     * from ghanover/mailman-sync
+     * @param $list
+     * @return array
      */
-    public function subscribe(string $list, string $email, bool $invite = false): ?Mailman
+    public function roster($list)
     {
-        $path = '/admin/' . $list . '/members/add';
-        $query = array(
-            'subscribe_or_invite' => (int) $invite,
-            'send_welcome_msg_to_this_batch' => 0,
-            'send_notifications_to_list_owner' => 0,
-            'subscribees' => $email,
-            'adminpw' => $this->lists[$list]);
-        $crawler = $this->getCrawler($path, $list, $query);
-        $h5 = $crawler->filterXPath('//body/h5');
-        if (!is_object($h5) || count($h5) == 0) {
-            return false;
-        }
-        if ($value = $h5->getNode(0)->nodeValue) {
-            if ($value == 'Successfully subscribed:' || $value == 'Successfully invited:') {
-                return $this;
-            } else {
-                $errorMsg = $crawler->filterXPath('//body/ul/li')->text();
-                throw new MailmanServiceException(
-                    trim($value).' '.trim($errorMsg),
-                    MailmanServiceException::USER_INPUT
-                );
+        $hasAdminCookie = false;
+        /** @var Cookie $cookie */
+        foreach( $this->httpBrowser->getCookieJar()->all() as $cookie) {
+            if ($list.'+admin' == $cookie->getName()) {
+                $hasAdminCookie = true;
             }
+        };
+        if (!$hasAdminCookie) { // set admin cookie
+            $crawler = $this->httpBrowser->request(
+                'GET',
+                $this->baseUri.'/admin/'.$list
+            );
+            $form = $crawler->selectButton("admlogin")->form();
+            $form['adminpw'] = 'swanee03';
+            $this->httpBrowser->submit($form);
         }
 
-        return false;
+        // now get and process the page
+        $path = '/roster/'.$list;
+        $crawler = $this->getCrawler($path, $list);
+        $members = $crawler->filterXPath('//li/a')->each(function (Crawler $node) {
+            return str_replace(' at ', '@', $node->text());
+        });
+
+        return $members;
     }
-
-    public function isSubscribed(string $list, string $email): bool
-    {
-        try {
-            $searchResults = $this->member($list, $email);
-        }
-        catch(MailmanServiceException $e) {
-            if (6 == $e->getCode()) {
-                return false;
-            } else { // throw the exception again
-                throw new MailmanServiceException($e->getMessage(), $e->getCode());
-            }
-        }
-        foreach ($searchResults as $subscriber) {
-            if (!strcasecmp($email, $subscriber["address"])) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
 
     /**
      * Set digest. Note that the $email needs to be subsribed first
@@ -333,9 +441,10 @@ class Mailman
      *      &allmodbit_val=0&<email-address>_language=en&<email-address>_nodupes=1
      *      &adminpw=<adminpassword>)
      *
-     * @param string $email  Valid email address of a member
+     * @param string $list
+     * @param string $email Valid email address of a member
      *
-     * @param bool   $digest Set the Digest on (1) or off (0)
+     * @param string $digest Set the Digest on (1) or off (0)
      *
      * @return string Returns 1 if set on, or 0 if set off.
      *
@@ -349,11 +458,12 @@ class Mailman
     /**
      * Set an option
      *
-     * @param string $email  Valid email address of a member
+     * @param string $list
+     * @param string $email Valid email address of a member
      *
      * @param string $option A valid option (new-address, fullname, newpw, disablemail, digest, mime, dontreceive, ackposts, remind, conceal, rcvtopic, nodupes)
      *
-     * @param string $value  A value for the given option
+     * @param string $value A value for the given option
      *
      * @return string Returns resulting value, if successful.
      *
@@ -429,48 +539,94 @@ class Mailman
     }
 
     /**
-     * List members
+     * Subscribe
      *
-     * @return array  Returns two nested arrays, the first contains email addresses, the second contains names
+     * (ie: http://example.co.uk/mailman/admin/test_example.co.uk/members/add
+     * ?subscribe_or_invite=0&send_welcome_msg_to_this_batch=1
+     * &send_notifications_to_list_owner=0&subscribees=test%40example.co.uk
+     * &invitation=&setmemberopts_btn=Submit+Your+Changes)
+     *
+     * @param string $list
+     * @param string $email Valid email address to subscribe
+     * @param boolean $invite Send an invite or not (default)
+     *
+     * @return Mailman|bool
+     *
+     * @throws MailmanServiceException
      */
-    public function members(string $list): array
+    public function subscribe(string $list, string $email, bool $invite = false): ?Mailman
     {
-        $path  = '/admin/' . $list . '/members';
-        $crawler = $this->getCrawler($path, $list);
-        $letters = $crawler->filterXPath('//body/form/center[1]/table/tr[2]/td/center/a');
-
-        if (count($letters)) {
-            $letters = $letters->each(function (Crawler $node) {
-                return strtolower(trim($node->text(), '[]')) ;
-            });
-        } else {
-            $letters = [null];
+        $path = '/admin/' . $list . '/members/add';
+        $query = array(
+            'subscribe_or_invite' => (int) $invite,
+            'send_notifications_to_list_owner' => 0,
+            'send_welcome_msg_to_this_batch' => 0,
+            'subscribees' => $email,
+            'adminpw' => $this->lists[$list]);
+        $crawler = $this->getCrawler($path, $list, $query);
+        $h5 = $crawler->filterXPath('//body/h5');
+        if (!is_object($h5) || count($h5) == 0) {
+            return false;
         }
-        $members = array(array(), array());
-        foreach ($letters as $letter) {
-            $query = array('adminpw' => $this->lists[$list]);
-            if ($letter != null) {
-                $query['letter'] = $letter;
-                $crawler = $this->getCrawler($path, $list, $query);
-            }
-            $emails = $crawler->filterXPath('//html/body/form/center[1]/table/tr/td[2]/a');
-            $names = $crawler->filterXPath('//body/form/center[1]/table/tr/td[2]/input[1]/@value');
-            $count = count($emails);
-            for ($i=0;$i < $count;$i++) {
-                if ($emails->eq($i)) {
-                    $members[0][]=$emails->getNode($i)->nodeValue;
-                }
-                if ($names->eq($i)) {
-                    $members[1][]=$names->getNode($i)->nodeValue;
-                }
+        if ($value = $h5->getNode(0)->nodeValue) {
+            if ($value == 'Successfully subscribed:' || $value == 'Successfully invited:') {
+                return $this;
+            } else {
+                $errorMsg = $crawler->filterXPath('//body/ul/li')->text();
+                throw new MailmanServiceException(
+                    trim($value).' '.trim($errorMsg),
+                    MailmanServiceException::USER_INPUT
+                );
             }
         }
 
-        return $members;
+        return false;
     }
+
+    /**
+     * Unsubscribe
+     *
+     * (ie: <domain.com>/mailman/admin/<listname>/members/remove?send_unsub_ack_to_this_batch=0
+     *      &send_unsub_notifications_to_list_owner=0&unsubscribees=<email-address>&adminpw=<adminpassword>)
+     *
+     * @param string $list
+     * @param string $email Valid email address of a member to unsubscribe
+     *
+     * @return Mailman
+     *
+     * @throws MailmanServiceException
+     */
+    public function unsubscribe(string $list, string $email): ?Mailman
+    {
+        $path = '/admin/' . $list . '/members/remove';
+        $query = array(
+            'send_unsub_ack_to_this_batch' => 0,
+            'send_unsub_notifications_to_list_owner' => 0,
+            'unsubscribees' => $email,
+            'adminpw' => $this->lists[$list],
+        );
+        $crawler = $this->getCrawler($path, $list, $query);
+        $h5 = $crawler->filterXPath('//body/h5');
+        $h3 = $crawler->filterXPath('//body/h3');
+        if ($h5->getNode(0) && $h5->getNode(0)->nodeValue == 'Successfully Unsubscribed:') {
+            return $this;
+        }
+        if ($h3->getNode(0)) {
+            throw new MailmanServiceException(
+                trim($h3->getNode(0)->nodeValue, ':'),
+                MailmanServiceException::HTML_PARSE
+            );
+        }
+        throw new MailmanServiceException(
+            'Failed to parse HTML',
+            MailmanServiceException::HTML_PARSE
+        );
+    }
+
     /**
      * Version
      *
+     * @param string $list
      * @return string Returns the version of Mailman
      *
      * @throws MailmanServiceException
@@ -551,71 +707,7 @@ class Mailman
 //        return $a;
 //    }
 
-    /**
-     * from ghanover/mailman-sync
-     * @param $list
-     * @return array
-     */
-    public function roster($list)
-    {
-        $hasAdminCookie = false;
-        /** @var Cookie $cookie */
-        foreach( $this->httpBrowser->getCookieJar()->all() as $cookie) {
-            if ($list.'+admin' == $cookie->getName()) {
-                $hasAdminCookie = true;
-            }
-        };
-        if (!$hasAdminCookie) { // set admin cookie
-            $crawler = $this->httpBrowser->request(
-                'GET',
-                $this->baseUri.'/admin/'.$list
-            );
-            $form = $crawler->selectButton("admlogin")->form();
-            $form['adminpw'] = 'swanee03';
-            $this->httpBrowser->submit($form);
-        }
 
-        // now get and process the page
-        $path = '/roster/'.$list;
-        $crawler = $this->getCrawler($path, $list);
-        $members = $crawler->filterXPath('//li/a')->each(function (Crawler $node) {
-            return str_replace(' at ', '@', $node->text());
-        });
-
-        return $members;
-    }
-
-
-
-    /**
-     * from ghanover/mailman-sync
-     * @param string $list
-     * @return bool
-     * @throws MailmanServiceException
-     */
-    public function change(string $list, string $emailFrom, string $emailTo): bool
-    {
-        $path = '/admin/' . $list . '/members/change';
-        $query = [
-            'change_from' => $emailFrom,
-            'change_to' => $emailTo,
-            'notice_old' => 0,
-            'notice_new' => 0,
-            'adminpw' => $this->lists[$list],
-        ];
-        $crawler = $this->getCrawler($path, $list, $query);
-        $html = $crawler->html();
-        if (strstr($html, 'is not a member')) {
-            throw new MailmanServiceException($emailTo.' is already a list member',
-                MailmanServiceException::USER_INPUT);
-        }
-        if (strstr($html, 'is already a list member')) {
-            throw new MailmanServiceException($emailTo.' is already a list member',
-                MailmanServiceException::USER_INPUT);
-        }
-
-        return true;
-    }
 
     /**
      * @param string $path
@@ -641,6 +733,24 @@ class Mailman
             $parameters['body'] = $query;
         }
         $crawler = $this->httpBrowser->request($method, $uri, $parameters);
+
+        return $crawler;
+    }
+
+    /**
+     * @param string $list
+     * @param string $email
+     * @return Crawler
+     */
+    protected function getMemberCrawler(string $list, string $email): Crawler
+    {
+        $path = '/admin/'.$list.'/members';
+        $query = array(
+            'findmember' => $email,
+            'setmemberopts_btn' => null,
+            'adminpw' => $this->lists[$list],
+        );
+        $crawler = $this->getCrawler($path, $list, $query);
 
         return $crawler;
     }

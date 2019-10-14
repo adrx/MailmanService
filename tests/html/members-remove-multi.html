@@ -6,12 +6,17 @@
 </HEAD>
 <BODY bgcolor="white"
 dir="ltr">
-<h5>Successfully subscribed:</h5>
+<h5>Successfully Unsubscribed:</h5>
 <ul>
-<li>a@example.net
+    <li>a@example.net
+</ul>
+<p><h3><strong><font color="#ff0000" size="+2">Cannot unsubscribe non-members:</font></strong></h3>
+<ul>
+    <li>b@example.net
+    <li>fred
 </ul>
 <p><center><h2>Test mailing list administration<br>Membership&nbsp;Management... Section</h2></center><hr>
-<FORM action="../../../admin/test_example.co.uk/members/add" method="POST" enctype="multipart/form-data">
+<FORM action="../../../admin/test_example.co.uk/members/remove" method="POST" enctype="multipart/form-data">
 
   <table WIDTH="100%">
     <tr>
@@ -30,8 +35,8 @@ dir="ltr">
                   <li><strong>Membership&nbsp;Management...</strong>
 <ul>
 <li><a href="../../../admin/test_example.co.uk/members/list">Membership&nbsp;List</a>
-<li><a href="../../../admin/test_example.co.uk/members/add"><strong>[Mass&nbsp;Subscription]</strong></a>
-<li><a href="../../../admin/test_example.co.uk/members/remove">Mass&nbsp;Removal</a>
+<li><a href="../../../admin/test_example.co.uk/members/add">Mass&nbsp;Subscription</a>
+<li><a href="../../../admin/test_example.co.uk/members/remove"><strong>[Mass&nbsp;Removal]</strong></a>
 </ul>
 
                   <li><a href="../../../admin/test_example.co.uk/nondigest">Non-digest&nbsp;options</a>
@@ -67,40 +72,29 @@ dir="ltr">
         using the <em>Submit Your Changes</em> button below.<p>
   <table WIDTH="100%">
     <tr>
-      <td COLSPAN="2" BGCOLOR="#99ccff"><center><h2>Mass Subscriptions</h2></center></td>
+      <td COLSPAN="2" BGCOLOR="#99ccff"><center><h2>Mass Removals</h2></center></td>
     </tr>
   </table>
 <center>
   <table WIDTH="90%">
     <tr>
-      <td BGCOLOR="#dddddd"><div align="right">Subscribe these users now or invite them?</div></td>
+      <td BGCOLOR="#dddddd"><div align="right">Send unsubscription acknowledgement to the user?</div></td>
       <td BGCOLOR="#dddddd">
           <table CELLSPACING="5">
             <tr>
-              <td><INPUT name="subscribe_or_invite" type="RADIO" value="0" CHECKED >Subscribe</td>
-              <td><INPUT name="subscribe_or_invite" type="RADIO" value="1" >Invite</td>
+              <td><INPUT name="send_unsub_ack_to_this_batch" type="RADIO" value="0" CHECKED >No</td>
+              <td><INPUT name="send_unsub_ack_to_this_batch" type="RADIO" value="1" >Yes</td>
             </tr>
           </table>
 </td>
     </tr>
     <tr>
-      <td BGCOLOR="#dddddd"><div align="right">Send welcome messages to new subscribees?</div></td>
+      <td BGCOLOR="#dddddd"><div align="right">Send notifications to the list owner?</div></td>
       <td BGCOLOR="#dddddd">
           <table CELLSPACING="5">
             <tr>
-              <td><INPUT name="send_welcome_msg_to_this_batch" type="RADIO" value="0" >No</td>
-              <td><INPUT name="send_welcome_msg_to_this_batch" type="RADIO" value="1" CHECKED >Yes</td>
-            </tr>
-          </table>
-</td>
-    </tr>
-    <tr>
-      <td BGCOLOR="#dddddd"><div align="right">Send notifications of new subscriptions to the list owner?</div></td>
-      <td BGCOLOR="#dddddd">
-          <table CELLSPACING="5">
-            <tr>
-              <td><INPUT name="send_notifications_to_list_owner" type="RADIO" value="0" CHECKED >No</td>
-              <td><INPUT name="send_notifications_to_list_owner" type="RADIO" value="1" >Yes</td>
+              <td><INPUT name="send_unsub_notifications_to_list_owner" type="RADIO" value="0" CHECKED >No</td>
+              <td><INPUT name="send_unsub_notifications_to_list_owner" type="RADIO" value="1" >Yes</td>
             </tr>
           </table>
 </td>
@@ -109,23 +103,11 @@ dir="ltr">
       <td COLSPAN="2"><em>Enter one address per line below...</em></td>
     </tr>
     <tr>
-      <td COLSPAN="2"><center><TEXTAREA NAME=subscribees ROWS=10 COLS=70%></TEXTAREA></center></td>
+      <td COLSPAN="2"><center><TEXTAREA NAME=unsubscribees ROWS=10 COLS=70%></TEXTAREA></center></td>
     </tr>
     <tr>
       <td><em><div align="right">...or specify a file to upload:</div></em></td>
-      <td><INPUT name="subscribees_upload" type="FILE" value="" ></td>
-    </tr>
-    <tr>
-      <td>&nbsp;</td>
-      <td>&nbsp;</td>
-    </tr>
-    <tr>
-      <td COLSPAN="2"><em>Below, enter additional text to be added to the
-    top of your invitation or the subscription notification.  Include at least
-    one blank line at the end...</em></td>
-    </tr>
-    <tr>
-      <td COLSPAN="2"><center><TEXTAREA NAME=invitation ROWS=10 COLS=70%></TEXTAREA></center></td>
+      <td><INPUT name="unsubscribees_upload" type="FILE" value="" ></td>
     </tr>
   </table>
 </center><center>

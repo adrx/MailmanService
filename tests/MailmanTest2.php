@@ -5,6 +5,7 @@ namespace Adrx\MailmanService\Tests;
 
 
 use Adrx\MailmanService\Mailman;
+use Adrx\MailmanService\MailmanServiceException;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\BrowserKit\Cookie;
 use Symfony\Component\BrowserKit\History;
@@ -28,7 +29,7 @@ class MailmanTest2 extends TestCase
     }
 
     /**
-     * @expectedException \Adrx\MailmanService\MailmanServiceException
+     * @expectedException MailmanServiceException
      */
     public function testChangeAlreadyMember()
     {
@@ -39,7 +40,7 @@ class MailmanTest2 extends TestCase
     }
 
     /**
-     * @expectedException \Adrx\MailmanService\MailmanServiceException
+     * @expectedException MailmanServiceException
      */
     public function testChangeNotAMember()
     {
@@ -93,6 +94,4 @@ class MailmanTest2 extends TestCase
         $this->assertTrue(array_key_exists('test+admin', $c));
         $this->assertSame('123456', $c['test+admin']);
     }
-
-
 }

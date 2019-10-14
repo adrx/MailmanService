@@ -65,6 +65,88 @@ class MailmanTest extends TestCase
         }
     }
 
+
+    public function testAddMembersSingleSuccess()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-add-success.html');
+        $response = new MockResponse($html);
+        $mailman = $this->getMockMailman([$response, $response]);
+        $result = $mailman->addMembers('test_example.co.uk', ['a@example.net']);
+        $this->assertTrue(is_array($result));
+        $this->assertArrayHasKey('success', $result);
+        $this->assertTrue(in_array('a@example.net', $result['success']));
+        $this->assertArrayNotHasKey('already_member', $result);
+        $this->assertArrayNotHasKey('error', $result);
+    }
+
+    public function testAddMembersSingleAlreadyMember()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-add-fail.html');
+        $response = new MockResponse($html);
+        $mailman = $this->getMockMailman([$response, $response]);
+        $result = $mailman->addMembers('test_example.co.uk', ['a@example.net']);
+        $this->assertTrue(is_array($result));
+        $this->assertArrayNotHasKey('success', $result);
+        $this->assertArrayNotHasKey('error', $result);
+        $this->assertArrayHasKey('already_member', $result);
+        $this->assertTrue(in_array('a@example.net', $result['already_member']));
+    }
+
+    public function testAddMembersMulti()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-add-multi.html');
+
+        $response = new MockResponse($html);
+        $mailman = $this->getMockMailman([$response, $response]);
+        $subscribees = ['a@example.net', 'b@example.net', 'fred'];
+        $result = $mailman->addMembers('test_example.co.uk', $subscribees);
+        $this->assertTrue(is_array($result));
+        $this->assertTrue(is_array($result['success']));
+        $this->assertTrue(in_array('a@example.net', $result['success']));
+        $this->assertTrue(in_array('b@example.net', $result['already_member']));
+        $this->assertTrue(array_key_exists('fred', $result['error']));
+        $this->assertEquals('Bad/Invalid email address', $result['error']['fred']);
+    }
+
+    public function testRemoveMembersSingleSuccess()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-remove-success.html');
+        $response = new MockResponse($html);
+        $mailman = $this->getMockMailman([$response, $response]);
+        $result = $mailman->removeMembers('test_example.co.uk', ['a@example.net']);
+        $this->assertTrue(is_array($result));
+        $this->assertArrayHasKey('success', $result);
+        $this->assertTrue(in_array('a@example.net', $result['success']));
+        $this->assertArrayNotHasKey('failure', $result);
+    }
+
+    public function testRemoveMembersSingleNotSubscribed()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-remove-fail.html');
+        $response = new MockResponse($html);
+        $mailman = $this->getMockMailman([$response, $response]);
+        $result = $mailman->removeMembers('test_example.co.uk', ['a@example.net']);
+        $this->assertTrue(is_array($result));
+        $this->assertArrayNotHasKey('success', $result);
+        $this->assertArrayHasKey('failure', $result);
+        $this->assertTrue(in_array('a@example.net', $result['failure']));
+    }
+
+    public function testRemoveMembersMulti()
+    {
+        $html = file_get_contents(dirname(__FILE__).'/html/members-remove-multi.html');
+
+        $response = new MockResponse($html);
+        $mailman = $this->getMockMailman([$response, $response]);
+        $unsubscribees = ['a@example.net', 'b@example.net', 'fred'];
+        $result = $mailman->removeMembers('test_example.co.uk', $unsubscribees);
+        $this->assertTrue(is_array($result));
+        $this->assertTrue(is_array($result['success']));
+        $this->assertTrue(in_array('a@example.net', $result['success']));
+        $this->assertTrue(in_array('b@example.net', $result['failure']));
+        $this->assertTrue(in_array('fred', $result['failure']));
+    }
+
     public function testMember()
     {
         $html_success = file_get_contents(dirname(__FILE__).'/html/findmember-james.html');
@@ -157,8 +239,9 @@ class MailmanTest extends TestCase
     public function testModSubscriberShort()
     {
         $html = file_get_contents(dirname(__FILE__).'/html/members-short.html');
+        $response = new MockResponse($html);
         // test on
-        $responses = [new MockResponse($html), new MockResponse($html)];
+        $responses = [$response, $response];
         $mailman = $this->getMockMailman($responses);
         $mailman->modSubscriber('test_example.co.uk', 'test@example.com', true);
         $lastRequest = $this->history->current();
@@ -167,7 +250,6 @@ class MailmanTest extends TestCase
         $parameter = urlencode('test@example.com').'_mod';
         $this->assertTrue(isset($parameters[$parameter]));
         // test off
-        $responses = [new MockResponse($html), new MockResponse($html)];
         $mailman = $this->getMockMailman($responses);
         $mailman->modSubscriber('test_example.co.uk', 'test@example.com', false);
         $lastRequest = $this->history->current();
@@ -176,7 +258,6 @@ class MailmanTest extends TestCase
         $parameter = urlencode('test@example.com').'_mod';
         $this->assertFalse(isset($parameters[$parameter]));
     }
-
 
     /**
      * @dataProvider subscriberDataProvider
